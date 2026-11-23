@@ -79,11 +79,26 @@ accept a different API".
   per token or record rather than per byte, and remove intermediate copies.
   Moving from per-byte to per-token calls is often the second biggest win after
   removing allocations.
+- **Follow the bytes end-to-end.** Don't decode, convert and re-encode data that
+  arrives in the format it leaves in and isn't inspected in between; pass it
+  through as `[]byte` / `json.RawMessage`. Don't optimise a converter the caller
+  shouldn't be calling.
+- **Match writer boundary types.** `io.Writer` takes `[]byte`. Passing `[]byte`
+  through `fmt.Sprintf` into a `write(string)` helper forces `[]byte` → `string`
+  → `[]byte` copies of the whole payload.
 - **Layer the API.** Offer a low-level, allocation-free building block (raw
   tokens, views, scratch-owning iterators) and build the convenient API on top of
   it. Do not make the convenient, allocating API the only one.
+- **Keep domain packages free of transport types.** Model packages should not
+  import proto or HTTP packages; translate wire types at the transport edge.
+- **Zero-value safety at the edge, positive semantics inside.** When adding an
+  opt-out field to an existing struct whose zero value already means "all" (like
+  `http.Transport.DisableCompression`), invert it once at registration so
+  internal code works with positive flags instead of double negatives.
 - **Write ownership and lifetime into doc comments:** what is borrowed, what is
-  retained, what is safe for concurrent use, what the zero value means.
+  retained, what is safe for concurrent use, what the zero value means. Attach
+  each guarantee to the exact symbol that enforces it (not to a type if only one
+  field or consumer enforces it).
 - **Make the zero value useful** where it is natural.
 - **Prefer immutable shared values** and publish new snapshots, over locks around
   shared mutable state, when readers dominate.
@@ -169,6 +184,9 @@ before-and-after refactors that show the style.
 - Short receiver names, consistent across a type's methods; do not mix pointer and
   value receivers on one type without reason.
 - Doc comments start with the identifier's name and state the contract.
+- Keep sibling methods symmetric: if `Add` guards before cloning a snapshot,
+  `Remove` should too; don't mutate a value copy outside the branch that stores
+  it back.
 - Comment the why, not the what. Match the surrounding comment density.
 - Standard library first (`slices`, `maps`, `strings`, `math/bits`) before
   hand-written helpers.
@@ -176,10 +194,20 @@ before-and-after refactors that show the style.
 
 ## When reviewing or refactoring
 
-1. Identify the hot path and its benchmarks before touching anything.
-2. Measure complexity to find the worst functions; fix those first.
-3. Refactor in small steps, running focused tests after each.
-4. Keep behaviour identical: same results, same budgets and fallbacks, same
+1. Identify the hot path and its benchmarks before touching anything. Check that
+   the benchmark fixtures actually populate the default production fields.
+2. Separate correctness, API and clarity findings from performance suggestions.
+   Never suggest micro-optimisations (stack-array buffers, struct field packing,
+   shared sentinel slices, scratch reuse) without a profile showing the item is a
+   real share of the path's budget—saving 1-3 allocs on a 100+ alloc/op path is
+   over-optimisation.
+3. Measure complexity to find the worst functions; fix those first.
+4. Audit tests for false confidence and redundancy: verify each assertion
+   actually triggers the branch it claims to prove (e.g. overlapping inputs when
+   testing cache reuse), and drop unit tests of trivial unexported helpers
+   already covered through the real entry point.
+5. Refactor in small steps, running focused tests after each.
+6. Keep behaviour identical: same results, same budgets and fallbacks, same
    allocation guarantees. Change behaviour only as a separate, stated decision.
-5. Report what changed, the before/after complexity and benchmark numbers, and
+7. Report what changed, the before/after complexity and benchmark numbers, and
    anything not verified.

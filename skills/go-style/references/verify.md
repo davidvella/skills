@@ -24,6 +24,9 @@ benchstat /tmp/before.txt /tmp/after.txt
 - `-bench` patterns are split on `/` per sub-benchmark level, so an alternation
   such as `A/(x|y)/n=1` may match nothing. Run separate patterns instead.
 - Report time, B/op and allocs/op. Allocations often matter more than ns/op.
+- Verify benchmark fixtures populate the default production fields. Leaving a
+  default-on field empty hides its entire subsystem from both benchmarks and
+  profiles.
 
 To get a baseline after you have already edited code, build one from the base
 commit without touching your working tree:
@@ -46,7 +49,9 @@ go build -gcflags=-m ./pkg/foo 2>&1 | grep -E 'moved to heap|escapes to heap|fun
 Compare the output for the base and your change. A new `moved to heap` or
 `func literal escapes` on a hot path is a new allocation per call. Lines such as
 `append escapes to heap` for reusable buffers are expected: they only allocate
-when the buffer grows.
+when the buffer grows. Note that `make([]T, n) does not escape` with a
+non-constant `n` still heap-allocates via `runtime.makeslice`; confirm stack
+allocation with `-benchmem` or `-gcflags=-S`, not `-gcflags=-m` alone.
 
 Check inlining of small hot helpers:
 
@@ -66,7 +71,10 @@ go tool pprof -list 'pkg\.(\*T)\.method$' /tmp/pkg.test /tmp/cpu.out   # per lin
 
 When a refactor regresses, profile both versions with the same benchmark and
 compare where time moved. Test one hypothesis at a time: change one thing,
-measure, keep it or revert it.
+measure, keep it or revert it. Do not combine `-cpuprofile` with
+`-memprofilerate=1`: per-allocation stack sampling floods the CPU profile with
+`runtime.profilealloc` and `tracebackPCs`. Run CPU and memory profiles
+separately.
 
 ## Allocation tests
 
